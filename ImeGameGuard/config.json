@@ -1,0 +1,25 @@
+{
+  "Enabled": true,
+  "PollIntervalMs": 250,
+  "MatchFullscreenWindows": true,
+  "MinimumFullscreenCoverage": 0.9,
+  "DisableImeContext": true,
+  "BlockImeHotkeys": true,
+  "OnlineGameListEnabled": true,
+  "OnlineGameListUrl": "https://raw.githubusercontent.com/nino-exe/GameProcessesDB/main/gameprocessesdb.json",
+  "OnlineGameListRefreshHours": 168,
+  "OnlineGameListFile": "gameprocessesdb.json",
+  "GameProcesses": [
+    "Game.exe",
+    "MyGame-Win64-Shipping.exe"
+  ],
+  "ExcludeProcesses": [
+    "explorer.exe",
+    "dwm.exe",
+    "ApplicationFrameHost.exe",
+    "TextInputHost.exe",
+    "SearchHost.exe",
+    "SearchApp.exe",
+    "ShellExperienceHost.exe"
+  ]
+}
