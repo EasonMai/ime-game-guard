@@ -9,6 +9,11 @@ internal sealed record CatalogRefreshResult(bool Updated, bool Failed, string Me
     public static CatalogRefreshResult NotNeeded => new(false, false, string.Empty);
 }
 
+internal sealed record GameProcessEntry(string ProcessName, string GameName)
+{
+    public override string ToString() => $"{GameName}  ({ProcessName})";
+}
+
 /// <summary>
 /// Loads a cached process-name database and refreshes it from a pinned public JSON source.
 /// Only executable names are read; the downloaded file is never executed.
@@ -24,6 +29,7 @@ internal sealed class GameProcessCatalog
     private bool _enabled;
     private int _refreshHours;
     private string[] _patterns = Array.Empty<string>();
+    private GameProcessEntry[] _entries = Array.Empty<GameProcessEntry>();
 
     public GameProcessCatalog(AppConfig config, string baseDirectory)
     {
@@ -36,6 +42,17 @@ internal sealed class GameProcessCatalog
 
     public IReadOnlyList<string> Patterns => Volatile.Read(ref _patterns);
     public int Count => Volatile.Read(ref _patterns).Length;
+    public IReadOnlyList<GameProcessEntry> Search(string query, int limit = 100)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Array.Empty<GameProcessEntry>();
+        var matches = Volatile.Read(ref _entries)
+            .Where(x => x.ProcessName.Contains(query, StringComparison.OrdinalIgnoreCase) || x.GameName.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .Take(limit)
+            .ToArray();
+        return matches;
+    }
 
     public void UpdateConfig(AppConfig config)
     {
@@ -77,7 +94,8 @@ internal sealed class GameProcessCatalog
             if (Encoding.UTF8.GetByteCount(json) > MaxDownloadBytes)
                 return new CatalogRefreshResult(false, true, "The online game list is too large and was rejected.");
 
-            var patterns = ParsePatterns(json);
+            var entries = ParseEntries(json);
+            var patterns = entries.Select(x => x.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             if (patterns.Length == 0)
                 return new CatalogRefreshResult(false, true, "The online game list is invalid or empty.");
 
@@ -88,6 +106,7 @@ internal sealed class GameProcessCatalog
             await File.WriteAllTextAsync(temporary, json, new UTF8Encoding(false), timeout.Token).ConfigureAwait(false);
             File.Move(temporary, _cachePath, true);
             Volatile.Write(ref _patterns, patterns);
+            Volatile.Write(ref _entries, entries);
             return new CatalogRefreshResult(true, false, string.Empty);
         }
         catch (OperationCanceledException)
@@ -109,21 +128,26 @@ internal sealed class GameProcessCatalog
         try
         {
             if (File.Exists(_cachePath))
-                Volatile.Write(ref _patterns, ParsePatterns(File.ReadAllText(_cachePath)));
+            {
+                var entries = ParseEntries(File.ReadAllText(_cachePath));
+                Volatile.Write(ref _entries, entries);
+                Volatile.Write(ref _patterns, entries.Select(x => x.ProcessName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            }
         }
         catch
         {
             Volatile.Write(ref _patterns, Array.Empty<string>());
+            Volatile.Write(ref _entries, Array.Empty<GameProcessEntry>());
         }
     }
 
-    private static string[] ParsePatterns(string json)
+    private static GameProcessEntry[] ParseEntries(string json)
     {
         using var document = JsonDocument.Parse(json);
         if (document.RootElement.ValueKind != JsonValueKind.Array)
-            return Array.Empty<string>();
+            return Array.Empty<GameProcessEntry>();
 
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var entries = new Dictionary<string, GameProcessEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in document.RootElement.EnumerateArray())
         {
             if (!item.TryGetProperty("processName", out var value) || value.ValueKind != JsonValueKind.String)
@@ -131,9 +155,12 @@ internal sealed class GameProcessCatalog
             var name = value.GetString()?.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length > 260 || name.IndexOfAny(new[] { '\\', '/' }) >= 0)
                 continue;
-            names.Add(name);
+            var gameName = item.TryGetProperty("Name", out var display) && display.ValueKind == JsonValueKind.String
+                ? display.GetString()?.Trim()
+                : null;
+            entries.TryAdd(name, new GameProcessEntry(name, string.IsNullOrWhiteSpace(gameName) ? name : gameName));
         }
-        return names.ToArray();
+        return entries.Values.ToArray();
     }
 
     private static string ResolveCachePath(AppConfig config, string baseDirectory)

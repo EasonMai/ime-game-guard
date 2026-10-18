@@ -12,8 +12,7 @@
   "OnlineGameListRefreshHours": 168,
   "OnlineGameListFile": "gameprocessesdb.json",
   "GameProcesses": [
-    "Game.exe",
-    "MyGame-Win64-Shipping.exe"
+    "Cyberpunk2077.exe"
   ],
   "ExcludeProcesses": [
     "explorer.exe",

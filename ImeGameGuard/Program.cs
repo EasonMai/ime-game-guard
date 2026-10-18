@@ -357,7 +357,7 @@ internal sealed class GuardForm : Form
         _processBox.Text = string.Join(Environment.NewLine, _config.GameProcesses);
         _fullscreenBox = new CheckBox { Text = "自动识别全屏和无边框窗口", AutoSize = true, Location = new Point(24, 385), Checked = _config.MatchFullscreenWindows };
         _fullscreenBox.CheckedChanged += (_, _) => { _config.MatchFullscreenWindows = _fullscreenBox.Checked; _config.Save(_configPath); _reload(); };
-        _hotkeysBox = new CheckBox { Text = "拦截常用输入法切换键", AutoSize = true, Location = new Point(300, 385), Checked = _config.BlockImeHotkeys };
+        _hotkeysBox = new CheckBox { Text = "拦截 Ctrl+Space / Win+Space（不拦 Shift）", AutoSize = true, Location = new Point(300, 385), Checked = _config.BlockImeHotkeys };
         _hotkeysBox.CheckedChanged += (_, _) => { _config.BlockImeHotkeys = _hotkeysBox.Checked; _config.Save(_configPath); MessageBox.Show(this, "重启程序后输入法热键设置生效。", "配置已保存", MessageBoxButtons.OK, MessageBoxIcon.Information); };
         var refresh = new Button { Text = "重新加载配置", Width = 120, Height = 30, Location = new Point(554, 420) };
         refresh.Click += (_, _) => { _reload(); RefreshView(); };
@@ -380,19 +380,21 @@ internal sealed class GuardForm : Form
         _resultsBox.Items.Clear();
         var query = _searchBox.Text.Trim();
         if (query.Length < 2) return;
-        foreach (var pattern in _catalog.Patterns.Where(x => x.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(100))
-            _resultsBox.Items.Add(pattern);
+        foreach (var entry in _catalog.Search(query))
+            _resultsBox.Items.Add(entry);
     }
 
     private void ApplySearchResult()
     {
-        if (_resultsBox.SelectedItem is not string process) return;
+        if (_resultsBox.SelectedItem is not GameProcessEntry entry) return;
+        var process = entry.ProcessName;
         if (!_config.GameProcesses.Contains(process, StringComparer.OrdinalIgnoreCase))
             _config.GameProcesses.Add(process);
         _config.Save(_configPath);
         _reload();
         RefreshView();
-        MessageBox.Show(this, $"已为 {process} 应用补丁。以后启动该游戏会自动禁用中英输入切换。", "补丁已应用", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _selectedLabel.Text = $"已保护：{entry.GameName} ({process})";
+        MessageBox.Show(this, $"已为 {entry.GameName} 应用补丁。以后启动该游戏会自动禁用中英输入切换。", "补丁已应用", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void ApplySelection()
@@ -441,7 +443,7 @@ internal sealed class ForegroundGameGuard
     private AppConfig _config;
     private readonly GameProcessCatalog _catalog;
     private IntPtr _window;
-    private IntPtr _savedImeContext;
+    private readonly Dictionary<IntPtr, IntPtr> _savedImeContexts = new();
     private bool _detached;
     private bool _gameActive;
 
@@ -487,8 +489,10 @@ internal sealed class ForegroundGameGuard
 
         if (_config.DisableImeContext)
         {
-            if (!_detached)
-                DisableForWindow(hwnd);
+            // Games may recreate/reassociate their IME context when changing scenes,
+            // opening an overlay, or teleporting. Reassert the detached state while
+            // the protected game remains in the foreground, without swallowing Shift.
+            DisableForWindow(hwnd);
             return _detached ? GuardState.Protected : GuardState.GameDetected;
         }
 
@@ -498,13 +502,32 @@ internal sealed class ForegroundGameGuard
 
     private void DisableForWindow(IntPtr hwnd)
     {
-        SetEnglishMode(hwnd);
-        var previous = Native.ImmAssociateContext(hwnd, IntPtr.Zero);
-        if (previous != IntPtr.Zero)
+        foreach (var target in EnumerateWindows(hwnd))
         {
-            _savedImeContext = previous;
-            _detached = true;
+            SetEnglishMode(target);
+            var previous = Native.ImmAssociateContext(target, IntPtr.Zero);
+            if (previous != IntPtr.Zero)
+            {
+                // Preserve the first context so restoring after focus loss returns
+                // the game's original state even if it recreates an IME context.
+                if (!_savedImeContexts.ContainsKey(target))
+                    _savedImeContexts[target] = previous;
+                _detached = true;
+            }
         }
+    }
+
+    private static IEnumerable<IntPtr> EnumerateWindows(IntPtr root)
+    {
+        yield return root;
+        var children = new List<IntPtr>();
+        Native.EnumChildWindows(root, (child, _) =>
+        {
+            children.Add(child);
+            return true;
+        }, IntPtr.Zero);
+        foreach (var child in children)
+            yield return child;
     }
 
     private static void SetEnglishMode(IntPtr hwnd)
@@ -530,9 +553,10 @@ internal sealed class ForegroundGameGuard
 
     public void Restore()
     {
-        if (_detached && _window != IntPtr.Zero && Native.IsWindow(_window))
-            Native.ImmAssociateContext(_window, _savedImeContext);
-        _savedImeContext = IntPtr.Zero;
+        foreach (var (window, context) in _savedImeContexts)
+            if (Native.IsWindow(window))
+                Native.ImmAssociateContext(window, context);
+        _savedImeContexts.Clear();
         _detached = false;
         _gameActive = false;
         _window = IntPtr.Zero;
@@ -602,9 +626,6 @@ internal sealed class ImeHotkeyBlocker : IDisposable
     private const uint VK_CONTROL = 0x11;
     private const uint VK_LWIN = 0x5B;
     private const uint VK_RWIN = 0x5C;
-    private const uint VK_LSHIFT = 0xA0;
-    private const uint VK_RSHIFT = 0xA1;
-    private const uint VK_MENU = 0x12;
     private readonly ForegroundGameGuard _guard;
     private readonly Native.LowLevelKeyboardProc _callback;
     private readonly HashSet<uint> _down = new();
@@ -640,10 +661,6 @@ internal sealed class ImeHotkeyBlocker : IDisposable
     {
         if (vk == VK_SPACE && (_down.Contains(VK_CONTROL) || _down.Contains(VK_LWIN) || _down.Contains(VK_RWIN)))
             return true;
-        if ((vk == VK_LSHIFT || vk == VK_RSHIFT) && _down.Contains(VK_MENU))
-            return true;
-        if (vk == VK_MENU && (_down.Contains(VK_LSHIFT) || _down.Contains(VK_RSHIFT)))
-            return true;
         return false;
     }
 
@@ -667,10 +684,12 @@ internal static class Native
     [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public uint dwFlags; }
     [StructLayout(LayoutKind.Sequential)] public struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr dwExtraInfo; }
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
 
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hWnd, EnumChildProc callback, IntPtr lParam);
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, int uCmd);
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);

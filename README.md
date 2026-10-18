@@ -8,15 +8,17 @@ IME Game Guard is a lightweight Windows tray utility that disables Chinese/Engli
 - Ships with an offline copy of the database and refreshes it over HTTPS every 168 hours.
 - Supports manual process names with `*` and `?` wildcards.
 - Detects fullscreen and borderless windows automatically.
-- Optionally blocks `Ctrl+Space`, `Win+Space`, and `Alt+Shift` while a game is protected.
+- Optionally blocks `Ctrl+Space` and `Win+Space` while a game is protected. Shift is never intercepted, so it remains available for sprint and other game controls.
+- Reasserts IME detachment while the game window remains focused, including after scenes or overlays change.
 - Runs in the system tray and restores the previous IME context on exit.
 - Registers itself for the current Windows user at startup, so protection resumes automatically after reboot.
 
 ## Quick start
 
 1. Extract the contents of the release archive.
-2. Run `ImeGameGuard.exe`. Keep it running in the tray while you play.
-3. Edit `config.json` only when you need to add a game that is missing from the database or change detection behavior.
+2. Run `ImeGameGuard.exe` and search by game title or executable name.
+3. Double-click the matching result to add that game's process to the persistent protection list.
+4. Keep the utility running in the tray while you play. The selected game's IME context is disabled whenever it is focused.
 
 The default configuration recognizes fullscreen and borderless games that cover at least 90% of a monitor. Set `MatchFullscreenWindows` to `false` if you want process-list matching only.
 
@@ -51,7 +53,7 @@ If a game is missing, add its executable name to `GameProcesses`, for example:
 | `GameProcesses` | Additional process names or wildcard patterns. |
 | `ExcludeProcesses` | Process names that should never be treated as games. |
 
-If a game uses `Ctrl+Space`, `Win+Space`, or `Alt+Shift` as an action key, set `BlockImeHotkeys` to `false`; IME context detachment remains enabled.
+If a game uses `Ctrl+Space` or `Win+Space` as an action key, set `BlockImeHotkeys` to `false`; Shift is never blocked.
 
 ## Build and publish
 
