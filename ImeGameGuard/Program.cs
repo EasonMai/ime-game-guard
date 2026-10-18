@@ -27,8 +27,6 @@ internal static class Program
                 config.Save(configPath);
             }
         }
-        using var startup = new StartupPatchForm(config, configPath);
-        startup.ShowDialog();
         StartupManager.EnsureRegistered();
         Application.Run(new GuardTrayContext(config, configPath));
     }
@@ -42,7 +40,7 @@ internal sealed class AppConfig
     public double MinimumFullscreenCoverage { get; set; } = 0.90;
     public bool DisableImeContext { get; set; } = true;
     public bool BlockImeHotkeys { get; set; } = true;
-    public bool AutoApplyDatabase { get; set; } = true;
+    public bool AutoApplyDatabase { get; set; } = false;
     public DateTime? DatabaseAppliedAt { get; set; }
     public bool OnlineGameListEnabled { get; set; } = true;
     public string OnlineGameListUrl { get; set; } = GameProcessCatalog.DefaultUrl;
@@ -310,6 +308,8 @@ internal sealed class GuardForm : Form
     private readonly Label _selectedLabel;
     private readonly Label _statusLabel;
     private readonly TextBox _processBox;
+    private readonly TextBox _searchBox;
+    private readonly ListBox _resultsBox;
     private readonly CheckBox _fullscreenBox;
     private readonly CheckBox _hotkeysBox;
     private string? _selectedPath;
@@ -337,7 +337,7 @@ internal sealed class GuardForm : Form
         MaximizeBox = false;
 
         var title = new Label { Text = "游戏输入法守卫", Font = new Font("Segoe UI", 18, FontStyle.Bold), AutoSize = true, Location = new Point(24, 20) };
-        var subtitle = new Label { Text = "游戏运行时自动保持英文输入状态", AutoSize = true, Location = new Point(26, 58), ForeColor = Color.DimGray };
+        var subtitle = new Label { Text = "搜索游戏并应用补丁，之后启动游戏会自动禁用中英输入切换", AutoSize = true, Location = new Point(26, 58), ForeColor = Color.DimGray };
         _statusLabel = new Label { Text = "状态：正在监视", AutoSize = false, Width = 650, Height = 32, Location = new Point(24, 92), ForeColor = Color.DarkGreen, Font = new Font("Segoe UI", 11, FontStyle.Bold) };
         _selectedLabel = new Label { Text = "尚未选择游戏可执行文件", AutoSize = false, Width = 650, Height = 42, Location = new Point(24, 142), BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(8), AutoEllipsis = true };
         var browse = new Button { Text = "选择游戏可执行文件...", Width = 190, Height = 34, Location = new Point(24, 195) };
@@ -347,16 +347,21 @@ internal sealed class GuardForm : Form
         var launch = new Button { Text = "启动游戏", Width = 140, Height = 34, Location = new Point(374, 195) };
         launch.Click += (_, _) => LaunchGame();
 
-        var processTitle = new Label { Text = "当前保护的进程", AutoSize = true, Location = new Point(24, 250) };
-        _processBox = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Width = 650, Height = 72, Location = new Point(24, 274), ReadOnly = true };
+        var processTitle = new Label { Text = "搜索数据库中的游戏", AutoSize = true, Location = new Point(24, 250) };
+        _searchBox = new TextBox { Width = 300, Height = 28, Location = new Point(24, 274) };
+        _searchBox.TextChanged += (_, _) => SearchGames();
+        _resultsBox = new ListBox { Width = 340, Height = 72, Location = new Point(334, 274) };
+        _resultsBox.DoubleClick += (_, _) => ApplySearchResult();
+        var searchHint = new Label { Text = "输入游戏名或 exe 名称", AutoSize = true, Location = new Point(24, 306), ForeColor = Color.Gray };
+        _processBox = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Width = 650, Height = 50, Location = new Point(24, 327), ReadOnly = true };
         _processBox.Text = string.Join(Environment.NewLine, _config.GameProcesses);
-        _fullscreenBox = new CheckBox { Text = "自动识别全屏和无边框窗口", AutoSize = true, Location = new Point(24, 360), Checked = _config.MatchFullscreenWindows };
+        _fullscreenBox = new CheckBox { Text = "自动识别全屏和无边框窗口", AutoSize = true, Location = new Point(24, 385), Checked = _config.MatchFullscreenWindows };
         _fullscreenBox.CheckedChanged += (_, _) => { _config.MatchFullscreenWindows = _fullscreenBox.Checked; _config.Save(_configPath); _reload(); };
-        _hotkeysBox = new CheckBox { Text = "拦截常用输入法切换键", AutoSize = true, Location = new Point(300, 360), Checked = _config.BlockImeHotkeys };
+        _hotkeysBox = new CheckBox { Text = "拦截常用输入法切换键", AutoSize = true, Location = new Point(300, 385), Checked = _config.BlockImeHotkeys };
         _hotkeysBox.CheckedChanged += (_, _) => { _config.BlockImeHotkeys = _hotkeysBox.Checked; _config.Save(_configPath); MessageBox.Show(this, "重启程序后输入法热键设置生效。", "配置已保存", MessageBoxButtons.OK, MessageBoxIcon.Information); };
-        var refresh = new Button { Text = "重新加载配置", Width = 120, Height = 30, Location = new Point(554, 398) };
+        var refresh = new Button { Text = "重新加载配置", Width = 120, Height = 30, Location = new Point(554, 420) };
         refresh.Click += (_, _) => { _reload(); RefreshView(); };
-        Controls.AddRange(new Control[] { title, subtitle, _statusLabel, _selectedLabel, browse, apply, launch, processTitle, _processBox, _fullscreenBox, _hotkeysBox, refresh });
+        Controls.AddRange(new Control[] { title, subtitle, _statusLabel, _selectedLabel, browse, apply, launch, processTitle, _searchBox, _resultsBox, searchHint, _processBox, _fullscreenBox, _hotkeysBox, refresh });
         Shown += (_, _) => RefreshView();
     }
 
@@ -368,6 +373,26 @@ internal sealed class GuardForm : Form
             _selectedPath = dialog.FileName;
             _selectedLabel.Text = _selectedPath;
         }
+    }
+
+    private void SearchGames()
+    {
+        _resultsBox.Items.Clear();
+        var query = _searchBox.Text.Trim();
+        if (query.Length < 2) return;
+        foreach (var pattern in _catalog.Patterns.Where(x => x.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(100))
+            _resultsBox.Items.Add(pattern);
+    }
+
+    private void ApplySearchResult()
+    {
+        if (_resultsBox.SelectedItem is not string process) return;
+        if (!_config.GameProcesses.Contains(process, StringComparer.OrdinalIgnoreCase))
+            _config.GameProcesses.Add(process);
+        _config.Save(_configPath);
+        _reload();
+        RefreshView();
+        MessageBox.Show(this, $"已为 {process} 应用补丁。以后启动该游戏会自动禁用中英输入切换。", "补丁已应用", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void ApplySelection()
@@ -407,6 +432,7 @@ internal sealed class GuardForm : Form
             _ => $"状态：正在监视（数据库 {_catalog.Count:N0} 条）"
         };
         _processBox.Text = string.Join(Environment.NewLine, _config.GameProcesses);
+        SearchGames();
     }
 }
 

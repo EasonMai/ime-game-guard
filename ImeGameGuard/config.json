@@ -5,7 +5,7 @@
   "MinimumFullscreenCoverage": 0.9,
   "DisableImeContext": true,
   "BlockImeHotkeys": true,
-  "AutoApplyDatabase": true,
+  "AutoApplyDatabase": false,
   "DatabaseAppliedAt": null,
   "OnlineGameListEnabled": true,
   "OnlineGameListUrl": "https://raw.githubusercontent.com/nino-exe/GameProcessesDB/main/gameprocessesdb.json",
