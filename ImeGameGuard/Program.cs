@@ -9,7 +9,7 @@ namespace ImeGameGuard;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         using var mutex = new Mutex(true, "ImeGameGuard.Singleton", out var created);
         if (!created)
@@ -18,6 +18,15 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         var configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
         var config = AppConfig.Load(configPath);
+        if (args.Length > 0 && File.Exists(args[0]))
+        {
+            var selected = Path.GetFileName(args[0]);
+            if (!config.GameProcesses.Contains(selected, StringComparer.OrdinalIgnoreCase))
+            {
+                config.GameProcesses.Add(selected);
+                config.Save(configPath);
+            }
+        }
         Application.Run(new GuardTrayContext(config, configPath));
     }
 }
@@ -96,6 +105,7 @@ internal sealed class GuardTrayContext : ApplicationContext
     private readonly GameProcessCatalog _catalog;
     private readonly ForegroundGameGuard _guard;
     private readonly ImeHotkeyBlocker? _hotkeyBlocker;
+    private readonly GuardForm _form;
 
     public GuardTrayContext(AppConfig config, string configPath)
     {
@@ -104,6 +114,8 @@ internal sealed class GuardTrayContext : ApplicationContext
         _catalog = new GameProcessCatalog(_config, AppContext.BaseDirectory);
         _guard = new ForegroundGameGuard(_config, _catalog);
         _hotkeyBlocker = _config.BlockImeHotkeys ? new ImeHotkeyBlocker(_guard) : null;
+        _form = new GuardForm(_config, _configPath, _catalog, _guard, Reload);
+        _form.Show();
 
         _statusItem = new ToolStripMenuItem("Status: monitoring") { Enabled = false };
         _tray = new NotifyIcon
@@ -153,6 +165,7 @@ internal sealed class GuardTrayContext : ApplicationContext
         _guard.Restore();
         _config = AppConfig.Load(_configPath);
         _guard.UpdateConfig(_config);
+        _form.SyncConfig(_config);
         if (oldBlock != _config.BlockImeHotkeys)
             _tray.ShowBalloonTip(2500, "Configuration loaded", "IME hotkey changes take effect after restart.", ToolTipIcon.Info);
         _timer.Interval = Math.Clamp(_config.PollIntervalMs, 50, 2000);
@@ -177,6 +190,10 @@ internal sealed class GuardTrayContext : ApplicationContext
 
     private void OpenConfig()
     {
+        _form.Show();
+        _form.Activate();
+        return;
+        /*
         try
         {
             Process.Start(new ProcessStartInfo("notepad.exe", _configPath) { UseShellExecute = true });
@@ -185,6 +202,7 @@ internal sealed class GuardTrayContext : ApplicationContext
         {
             _tray.ShowBalloonTip(3000, "Cannot open configuration", ex.Message, ToolTipIcon.Error);
         }
+        */
     }
 
     protected override void ExitThreadCore()
@@ -192,6 +210,7 @@ internal sealed class GuardTrayContext : ApplicationContext
         _timer.Stop();
         _guard.Restore();
         _hotkeyBlocker?.Dispose();
+        _form.Dispose();
         _tray.Visible = false;
         _tray.Dispose();
         base.ExitThreadCore();
@@ -199,6 +218,116 @@ internal sealed class GuardTrayContext : ApplicationContext
 }
 
 internal enum GuardState { Monitoring, GameDetected, Protected, Disabled }
+
+internal sealed class GuardForm : Form
+{
+    private readonly AppConfig _config;
+    private readonly string _configPath;
+    private readonly GameProcessCatalog _catalog;
+    private readonly ForegroundGameGuard _guard;
+    private readonly Action _reload;
+    private readonly Label _selectedLabel;
+    private readonly Label _statusLabel;
+    private readonly TextBox _processBox;
+    private readonly CheckBox _fullscreenBox;
+    private readonly CheckBox _hotkeysBox;
+    private string? _selectedPath;
+
+    public void SyncConfig(AppConfig config)
+    {
+        _processBox.Text = string.Join(Environment.NewLine, config.GameProcesses);
+        _fullscreenBox.Checked = config.MatchFullscreenWindows;
+        _hotkeysBox.Checked = config.BlockImeHotkeys;
+        RefreshView();
+    }
+
+    public GuardForm(AppConfig config, string configPath, GameProcessCatalog catalog, ForegroundGameGuard guard, Action reload)
+    {
+        _config = config;
+        _configPath = configPath;
+        _catalog = catalog;
+        _guard = guard;
+        _reload = reload;
+        Text = "IME Game Guard";
+        StartPosition = FormStartPosition.CenterScreen;
+        MinimumSize = new Size(620, 410);
+        Size = new Size(720, 470);
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
+
+        var title = new Label { Text = "IME Game Guard", Font = new Font("Segoe UI", 18, FontStyle.Bold), AutoSize = true, Location = new Point(24, 20) };
+        var subtitle = new Label { Text = "Automatically keep games in English input mode", AutoSize = true, Location = new Point(26, 58), ForeColor = Color.DimGray };
+        _statusLabel = new Label { Text = "Status: monitoring", AutoSize = false, Width = 650, Height = 32, Location = new Point(24, 92), ForeColor = Color.DarkGreen, Font = new Font("Segoe UI", 11, FontStyle.Bold) };
+        _selectedLabel = new Label { Text = "No game executable selected", AutoSize = false, Width = 650, Height = 42, Location = new Point(24, 142), BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(8), AutoEllipsis = true };
+        var browse = new Button { Text = "Select game executable...", Width = 190, Height = 34, Location = new Point(24, 195) };
+        browse.Click += (_, _) => SelectExecutable();
+        var apply = new Button { Text = "Apply patch", Width = 140, Height = 34, Location = new Point(224, 195) };
+        apply.Click += (_, _) => ApplySelection();
+        var launch = new Button { Text = "Launch game", Width = 140, Height = 34, Location = new Point(374, 195) };
+        launch.Click += (_, _) => LaunchGame();
+
+        var processTitle = new Label { Text = "Protected process names", AutoSize = true, Location = new Point(24, 250) };
+        _processBox = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Width = 650, Height = 72, Location = new Point(24, 274), ReadOnly = true };
+        _processBox.Text = string.Join(Environment.NewLine, _config.GameProcesses);
+        _fullscreenBox = new CheckBox { Text = "Detect fullscreen and borderless windows", AutoSize = true, Location = new Point(24, 360), Checked = _config.MatchFullscreenWindows };
+        _fullscreenBox.CheckedChanged += (_, _) => { _config.MatchFullscreenWindows = _fullscreenBox.Checked; _config.Save(_configPath); _reload(); };
+        _hotkeysBox = new CheckBox { Text = "Block common IME hotkeys while protected", AutoSize = true, Location = new Point(300, 360), Checked = _config.BlockImeHotkeys };
+        _hotkeysBox.CheckedChanged += (_, _) => { _config.BlockImeHotkeys = _hotkeysBox.Checked; _config.Save(_configPath); MessageBox.Show(this, "Restart IME Game Guard for hotkey changes to take effect.", "Configuration saved", MessageBoxButtons.OK, MessageBoxIcon.Information); };
+        var refresh = new Button { Text = "Reload config", Width = 120, Height = 30, Location = new Point(554, 398) };
+        refresh.Click += (_, _) => { _reload(); RefreshView(); };
+        Controls.AddRange(new Control[] { title, subtitle, _statusLabel, _selectedLabel, browse, apply, launch, processTitle, _processBox, _fullscreenBox, _hotkeysBox, refresh });
+        Shown += (_, _) => RefreshView();
+    }
+
+    private void SelectExecutable()
+    {
+        using var dialog = new OpenFileDialog { Filter = "Executable files (*.exe)|*.exe|All files (*.*)|*.*", Title = "Select a game executable" };
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            _selectedPath = dialog.FileName;
+            _selectedLabel.Text = _selectedPath;
+        }
+    }
+
+    private void ApplySelection()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedPath) || !File.Exists(_selectedPath))
+        {
+            MessageBox.Show(this, "Select an existing game executable first.", "IME Game Guard", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var process = Path.GetFileName(_selectedPath);
+        if (!_config.GameProcesses.Contains(process, StringComparer.OrdinalIgnoreCase))
+            _config.GameProcesses.Add(process);
+        _config.Save(_configPath);
+        _reload();
+        RefreshView();
+        MessageBox.Show(this, $"Added {process} to the protected process list.", "Patch applied", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void LaunchGame()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedPath) || !File.Exists(_selectedPath))
+        {
+            MessageBox.Show(this, "Select an existing game executable first.", "IME Game Guard", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        Process.Start(new ProcessStartInfo(_selectedPath) { WorkingDirectory = Path.GetDirectoryName(_selectedPath), UseShellExecute = true });
+    }
+
+    private void RefreshView()
+    {
+        var state = _config.Enabled ? _guard.Update() : GuardState.Disabled;
+        _statusLabel.Text = state switch
+        {
+            GuardState.Protected => "Status: IME disabled for the focused game",
+            GuardState.GameDetected => "Status: game detected",
+            GuardState.Disabled => "Status: paused",
+            _ => $"Status: monitoring ({_catalog.Count:N0} database entries)"
+        };
+        _processBox.Text = string.Join(Environment.NewLine, _config.GameProcesses);
+    }
+}
 
 internal sealed class ForegroundGameGuard
 {
