@@ -10,6 +10,7 @@ IME Game Guard is a lightweight Windows tray utility that disables Chinese/Engli
 - Detects fullscreen and borderless windows automatically.
 - Optionally blocks `Ctrl+Space`, `Win+Space`, and `Alt+Shift` while a game is protected.
 - Runs in the system tray and restores the previous IME context on exit.
+- Registers itself for the current Windows user at startup, so protection resumes automatically after reboot.
 
 ## Quick start
 

@@ -27,6 +27,9 @@ internal static class Program
                 config.Save(configPath);
             }
         }
+        using var startup = new StartupPatchForm(config, configPath);
+        startup.ShowDialog();
+        StartupManager.EnsureRegistered();
         Application.Run(new GuardTrayContext(config, configPath));
     }
 }
@@ -39,6 +42,8 @@ internal sealed class AppConfig
     public double MinimumFullscreenCoverage { get; set; } = 0.90;
     public bool DisableImeContext { get; set; } = true;
     public bool BlockImeHotkeys { get; set; } = true;
+    public bool AutoApplyDatabase { get; set; } = true;
+    public DateTime? DatabaseAppliedAt { get; set; }
     public bool OnlineGameListEnabled { get; set; } = true;
     public string OnlineGameListUrl { get; set; } = GameProcessCatalog.DefaultUrl;
     public int OnlineGameListRefreshHours { get; set; } = 168;
@@ -214,6 +219,82 @@ internal sealed class GuardTrayContext : ApplicationContext
         _tray.Visible = false;
         _tray.Dispose();
         base.ExitThreadCore();
+    }
+}
+
+internal sealed class StartupPatchForm : Form
+{
+    private readonly AppConfig _config;
+    private readonly string _configPath;
+    private readonly ProgressBar _progress;
+    private readonly Label _message;
+
+    public StartupPatchForm(AppConfig config, string configPath)
+    {
+        _config = config;
+        _configPath = configPath;
+        Text = "游戏输入法守卫";
+        StartPosition = FormStartPosition.CenterScreen;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        ControlBox = false;
+        ClientSize = new Size(500, 150);
+        _message = new Label { Text = "正在修补，请稍候...", AutoSize = false, Width = 450, Height = 35, Location = new Point(25, 20), Font = new Font("Segoe UI", 12, FontStyle.Bold) };
+        _progress = new ProgressBar { Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 25, Width = 450, Height = 24, Location = new Point(25, 70) };
+        Controls.AddRange(new Control[] { _message, _progress });
+        Shown += async (_, _) => await ApplyAsync();
+    }
+
+    private async Task ApplyAsync()
+    {
+        if (!_config.AutoApplyDatabase)
+        {
+            Close();
+            return;
+        }
+
+        try
+        {
+            var catalog = new GameProcessCatalog(_config, AppContext.BaseDirectory);
+            var result = await catalog.RefreshIfNeededAsync();
+            var before = new HashSet<string>(_config.GameProcesses, StringComparer.OrdinalIgnoreCase);
+            foreach (var process in catalog.Patterns)
+                before.Add(process);
+            _config.GameProcesses = before.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            _config.DatabaseAppliedAt = DateTime.UtcNow;
+            _config.Save(_configPath);
+            _message.Text = result.Updated ? $"正在修补... 已更新并应用 {_config.GameProcesses.Count:N0} 个游戏进程" : $"正在修补... 已应用 {_config.GameProcesses.Count:N0} 个游戏进程";
+            await Task.Delay(700);
+        }
+        catch (Exception ex)
+        {
+            _message.Text = $"修补完成（使用本地列表）：{ex.Message}";
+            await Task.Delay(900);
+        }
+        finally
+        {
+            Close();
+        }
+    }
+}
+
+internal static class StartupManager
+{
+    private const string RunKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    private const string ValueName = "ImeGameGuard";
+
+    public static void EnsureRegistered()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true) ?? Registry.CurrentUser.CreateSubKey(RunKey);
+            var executable = Environment.ProcessPath;
+            if (key is not null && !string.IsNullOrWhiteSpace(executable))
+                key.SetValue(ValueName, $"\"{executable}\" --startup");
+        }
+        catch
+        {
+            // Startup registration is best effort; the application remains usable without it.
+        }
     }
 }
 
