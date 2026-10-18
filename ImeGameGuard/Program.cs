@@ -117,11 +117,11 @@ internal sealed class GuardTrayContext : ApplicationContext
         _form = new GuardForm(_config, _configPath, _catalog, _guard, Reload);
         _form.Show();
 
-        _statusItem = new ToolStripMenuItem("Status: monitoring") { Enabled = false };
+        _statusItem = new ToolStripMenuItem("状态：正在监视") { Enabled = false };
         _tray = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "IME Game Guard",
+            Text = "游戏输入法守卫",
             Visible = true,
             ContextMenuStrip = BuildMenu()
         };
@@ -133,7 +133,7 @@ internal sealed class GuardTrayContext : ApplicationContext
         _ = RefreshOnlineListAsync();
 
         if (!string.IsNullOrWhiteSpace(_config.LastLoadError))
-            _tray.ShowBalloonTip(4000, "Configuration load failed", _config.LastLoadError, ToolTipIcon.Warning);
+            _tray.ShowBalloonTip(4000, "配置读取失败", _config.LastLoadError, ToolTipIcon.Warning);
     }
 
     private ContextMenuStrip BuildMenu()
@@ -141,9 +141,9 @@ internal sealed class GuardTrayContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Open configuration", null, (_, _) => OpenConfig());
-        menu.Items.Add("Reload configuration", null, (_, _) => Reload());
-        menu.Items.Add("Exit", null, (_, _) => ExitThread());
+        menu.Items.Add("打开配置文件", null, (_, _) => OpenConfig());
+        menu.Items.Add("重新加载配置", null, (_, _) => Reload());
+        menu.Items.Add("退出", null, (_, _) => ExitThread());
         return menu;
     }
 
@@ -152,10 +152,10 @@ internal sealed class GuardTrayContext : ApplicationContext
         var state = _config.Enabled ? _guard.Update() : GuardState.Disabled;
         _statusItem.Text = state switch
         {
-            GuardState.Protected => "Status: IME disabled for game",
-            GuardState.GameDetected => "Status: game detected",
-            GuardState.Disabled => "Status: paused",
-            _ => "Status: monitoring"
+            GuardState.Protected => "状态：已禁用当前游戏输入法",
+            GuardState.GameDetected => "状态：已检测到游戏",
+            GuardState.Disabled => "状态：已暂停",
+            _ => "状态：正在监视"
         };
     }
 
@@ -167,7 +167,7 @@ internal sealed class GuardTrayContext : ApplicationContext
         _guard.UpdateConfig(_config);
         _form.SyncConfig(_config);
         if (oldBlock != _config.BlockImeHotkeys)
-            _tray.ShowBalloonTip(2500, "Configuration loaded", "IME hotkey changes take effect after restart.", ToolTipIcon.Info);
+            _tray.ShowBalloonTip(2500, "配置已加载", "输入法热键设置将在重启程序后生效。", ToolTipIcon.Info);
         _timer.Interval = Math.Clamp(_config.PollIntervalMs, 50, 2000);
         _ = RefreshOnlineListAsync();
     }
@@ -178,13 +178,13 @@ internal sealed class GuardTrayContext : ApplicationContext
         {
             var result = await _catalog.RefreshIfNeededAsync();
             if (result.Updated)
-                _tray.ShowBalloonTip(2500, "Game list updated", $"Loaded {_catalog.Count:N0} process names.", ToolTipIcon.Info);
+                _tray.ShowBalloonTip(2500, "游戏列表已更新", $"已加载 {_catalog.Count:N0} 个进程名。", ToolTipIcon.Info);
             else if (result.Failed)
-                _tray.ShowBalloonTip(3500, "Game list update failed", result.Message, ToolTipIcon.Warning);
+                _tray.ShowBalloonTip(3500, "游戏列表更新失败", result.Message, ToolTipIcon.Warning);
         }
         catch (Exception ex)
         {
-            _tray.ShowBalloonTip(3500, "Game list update failed", ex.Message, ToolTipIcon.Warning);
+            _tray.ShowBalloonTip(3500, "游戏列表更新失败", ex.Message, ToolTipIcon.Warning);
         }
     }
 
@@ -200,7 +200,7 @@ internal sealed class GuardTrayContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            _tray.ShowBalloonTip(3000, "Cannot open configuration", ex.Message, ToolTipIcon.Error);
+            _tray.ShowBalloonTip(3000, "无法打开配置", ex.Message, ToolTipIcon.Error);
         }
         */
     }
@@ -248,32 +248,32 @@ internal sealed class GuardForm : Form
         _catalog = catalog;
         _guard = guard;
         _reload = reload;
-        Text = "IME Game Guard";
+        Text = "游戏输入法守卫";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(620, 410);
         Size = new Size(720, 470);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
 
-        var title = new Label { Text = "IME Game Guard", Font = new Font("Segoe UI", 18, FontStyle.Bold), AutoSize = true, Location = new Point(24, 20) };
-        var subtitle = new Label { Text = "Automatically keep games in English input mode", AutoSize = true, Location = new Point(26, 58), ForeColor = Color.DimGray };
-        _statusLabel = new Label { Text = "Status: monitoring", AutoSize = false, Width = 650, Height = 32, Location = new Point(24, 92), ForeColor = Color.DarkGreen, Font = new Font("Segoe UI", 11, FontStyle.Bold) };
-        _selectedLabel = new Label { Text = "No game executable selected", AutoSize = false, Width = 650, Height = 42, Location = new Point(24, 142), BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(8), AutoEllipsis = true };
-        var browse = new Button { Text = "Select game executable...", Width = 190, Height = 34, Location = new Point(24, 195) };
+        var title = new Label { Text = "游戏输入法守卫", Font = new Font("Segoe UI", 18, FontStyle.Bold), AutoSize = true, Location = new Point(24, 20) };
+        var subtitle = new Label { Text = "游戏运行时自动保持英文输入状态", AutoSize = true, Location = new Point(26, 58), ForeColor = Color.DimGray };
+        _statusLabel = new Label { Text = "状态：正在监视", AutoSize = false, Width = 650, Height = 32, Location = new Point(24, 92), ForeColor = Color.DarkGreen, Font = new Font("Segoe UI", 11, FontStyle.Bold) };
+        _selectedLabel = new Label { Text = "尚未选择游戏可执行文件", AutoSize = false, Width = 650, Height = 42, Location = new Point(24, 142), BorderStyle = BorderStyle.FixedSingle, Padding = new Padding(8), AutoEllipsis = true };
+        var browse = new Button { Text = "选择游戏可执行文件...", Width = 190, Height = 34, Location = new Point(24, 195) };
         browse.Click += (_, _) => SelectExecutable();
-        var apply = new Button { Text = "Apply patch", Width = 140, Height = 34, Location = new Point(224, 195) };
+        var apply = new Button { Text = "应用补丁", Width = 140, Height = 34, Location = new Point(224, 195) };
         apply.Click += (_, _) => ApplySelection();
-        var launch = new Button { Text = "Launch game", Width = 140, Height = 34, Location = new Point(374, 195) };
+        var launch = new Button { Text = "启动游戏", Width = 140, Height = 34, Location = new Point(374, 195) };
         launch.Click += (_, _) => LaunchGame();
 
-        var processTitle = new Label { Text = "Protected process names", AutoSize = true, Location = new Point(24, 250) };
+        var processTitle = new Label { Text = "当前保护的进程", AutoSize = true, Location = new Point(24, 250) };
         _processBox = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Width = 650, Height = 72, Location = new Point(24, 274), ReadOnly = true };
         _processBox.Text = string.Join(Environment.NewLine, _config.GameProcesses);
-        _fullscreenBox = new CheckBox { Text = "Detect fullscreen and borderless windows", AutoSize = true, Location = new Point(24, 360), Checked = _config.MatchFullscreenWindows };
+        _fullscreenBox = new CheckBox { Text = "自动识别全屏和无边框窗口", AutoSize = true, Location = new Point(24, 360), Checked = _config.MatchFullscreenWindows };
         _fullscreenBox.CheckedChanged += (_, _) => { _config.MatchFullscreenWindows = _fullscreenBox.Checked; _config.Save(_configPath); _reload(); };
-        _hotkeysBox = new CheckBox { Text = "Block common IME hotkeys while protected", AutoSize = true, Location = new Point(300, 360), Checked = _config.BlockImeHotkeys };
-        _hotkeysBox.CheckedChanged += (_, _) => { _config.BlockImeHotkeys = _hotkeysBox.Checked; _config.Save(_configPath); MessageBox.Show(this, "Restart IME Game Guard for hotkey changes to take effect.", "Configuration saved", MessageBoxButtons.OK, MessageBoxIcon.Information); };
-        var refresh = new Button { Text = "Reload config", Width = 120, Height = 30, Location = new Point(554, 398) };
+        _hotkeysBox = new CheckBox { Text = "拦截常用输入法切换键", AutoSize = true, Location = new Point(300, 360), Checked = _config.BlockImeHotkeys };
+        _hotkeysBox.CheckedChanged += (_, _) => { _config.BlockImeHotkeys = _hotkeysBox.Checked; _config.Save(_configPath); MessageBox.Show(this, "重启程序后输入法热键设置生效。", "配置已保存", MessageBoxButtons.OK, MessageBoxIcon.Information); };
+        var refresh = new Button { Text = "重新加载配置", Width = 120, Height = 30, Location = new Point(554, 398) };
         refresh.Click += (_, _) => { _reload(); RefreshView(); };
         Controls.AddRange(new Control[] { title, subtitle, _statusLabel, _selectedLabel, browse, apply, launch, processTitle, _processBox, _fullscreenBox, _hotkeysBox, refresh });
         Shown += (_, _) => RefreshView();
@@ -293,7 +293,7 @@ internal sealed class GuardForm : Form
     {
         if (string.IsNullOrWhiteSpace(_selectedPath) || !File.Exists(_selectedPath))
         {
-            MessageBox.Show(this, "Select an existing game executable first.", "IME Game Guard", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "请先选择一个存在的游戏可执行文件。", "游戏输入法守卫", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         var process = Path.GetFileName(_selectedPath);
@@ -302,14 +302,14 @@ internal sealed class GuardForm : Form
         _config.Save(_configPath);
         _reload();
         RefreshView();
-        MessageBox.Show(this, $"Added {process} to the protected process list.", "Patch applied", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show(this, $"已将 {process} 加入保护进程列表。", "补丁已应用", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void LaunchGame()
     {
         if (string.IsNullOrWhiteSpace(_selectedPath) || !File.Exists(_selectedPath))
         {
-            MessageBox.Show(this, "Select an existing game executable first.", "IME Game Guard", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "请先选择一个存在的游戏可执行文件。", "游戏输入法守卫", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         Process.Start(new ProcessStartInfo(_selectedPath) { WorkingDirectory = Path.GetDirectoryName(_selectedPath), UseShellExecute = true });
@@ -320,10 +320,10 @@ internal sealed class GuardForm : Form
         var state = _config.Enabled ? _guard.Update() : GuardState.Disabled;
         _statusLabel.Text = state switch
         {
-            GuardState.Protected => "Status: IME disabled for the focused game",
-            GuardState.GameDetected => "Status: game detected",
-            GuardState.Disabled => "Status: paused",
-            _ => $"Status: monitoring ({_catalog.Count:N0} database entries)"
+            GuardState.Protected => "状态：已禁用当前游戏输入法",
+            GuardState.GameDetected => "状态：已检测到游戏",
+            GuardState.Disabled => "状态：已暂停",
+            _ => $"状态：正在监视（数据库 {_catalog.Count:N0} 条）"
         };
         _processBox.Text = string.Join(Environment.NewLine, _config.GameProcesses);
     }
